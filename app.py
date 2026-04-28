@@ -1,170 +1,145 @@
 import streamlit as st
-import pandas as pd
 import numpy as np
+import pandas as pd
 
-st.set_page_config(page_title="Equity Valuation Tool", layout="wide")
-
-st.title("📊 Equity Valuation Dashboard (DCF Model)")
-st.write(
-    "This tool estimates a company’s intrinsic value by forecasting cash flows "
-    "and discounting them back to present value using an appropriate risk-adjusted rate."
-)
+st.title("📊 DCF Valuation App")
 
 # -----------------------------
-# INPUT PANEL
+# Sidebar Inputs
 # -----------------------------
-st.sidebar.header("📌 Model Inputs")
+st.sidebar.header("🔧 Inputs")
 
-# Core assumptions
-base_revenue = st.sidebar.number_input("Starting Revenue ($M)", value=1200.0)
-growth_stage1 = st.sidebar.slider("Initial Growth Rate (%)", 0.0, 20.0, 7.0) / 100
-growth_stage2 = st.sidebar.slider("Long-Term Growth Rate (%)", 0.0, 5.0, 2.5) / 100
-transition_years = st.sidebar.slider("High-Growth Period (Years)", 1, 10, 5)
+# Basic Inputs
+revenue = st.sidebar.number_input("Current Revenue ($)", value=1000.0)
 
-# Operating assumptions
-operating_margin = st.sidebar.slider("Operating Margin (%)", 5.0, 60.0, 22.0) / 100
-tax = st.sidebar.slider("Effective Tax Rate (%)", 0.0, 40.0, 21.0) / 100
+st.sidebar.subheader("Growth Assumptions")
+growth_high = st.sidebar.number_input("High Growth Rate (%)", value=6.0) / 100
+growth_stable = st.sidebar.number_input("Terminal Growth Rate (%)", value=2.5) / 100
+high_growth_years = st.sidebar.slider("High Growth Period (Years)", 1, 10, 5)
 
-# Cash flow adjustments
-capex_rate = st.sidebar.slider("CapEx (% of Revenue)", 0.0, 15.0, 6.0) / 100
-wc_rate = st.sidebar.slider("Working Capital (% of Revenue)", 0.0, 10.0, 2.0) / 100
+st.sidebar.subheader("Operating Assumptions")
+margin = st.sidebar.number_input("EBIT Margin (%)", value=20.0) / 100
+tax_rate = st.sidebar.number_input("Tax Rate (%)", value=25.0) / 100
+reinvest = st.sidebar.number_input("Reinvestment Rate (%)", value=50.0) / 100
 
-# Discounting
-discount_rate = st.sidebar.slider("Discount Rate (WACC %)", 5.0, 15.0, 9.5) / 100
+st.sidebar.subheader("Discounting")
+wacc = st.sidebar.number_input("WACC (%)", value=10.0) / 100
 
-# Capital structure
-net_debt = st.sidebar.number_input("Net Debt ($M)", value=600.0)
-shares_out = st.sidebar.number_input("Shares Outstanding (M)", value=150.0)
+st.sidebar.subheader("Balance Sheet")
+debt = st.sidebar.number_input("Debt ($)", value=500.0)
+cash = st.sidebar.number_input("Cash ($)", value=100.0)
+shares = st.sidebar.number_input("Shares Outstanding", value=100.0)
 
-# -----------------------------
-# MODEL OVERVIEW
-# -----------------------------
-st.header("🧠 Model Logic Overview")
-
-st.markdown("""
-This valuation model follows a **multi-stage Discounted Cash Flow (DCF)** approach:
-
-1. Forecast revenue using a two-stage growth model  
-2. Convert revenue into operating profit  
-3. Adjust for taxes and reinvestment needs  
-4. Discount projected cash flows using WACC  
-5. Estimate terminal value beyond explicit forecast period  
-6. Derive enterprise and equity value  
-
-DCF reflects the principle that **a company is worth the present value of its future cash flows**.
-""")
+# Validation
+if wacc <= growth_stable:
+    st.error("WACC must be greater than terminal growth rate.")
+    st.stop()
 
 # -----------------------------
-# PROJECTION ENGINE
+# Projection
 # -----------------------------
-years = transition_years + 5
+years = high_growth_years + 5
 
-revenue_list = []
-fcf_list = []
-
-rev = base_revenue
+revenues, ebits, nopats, fcfs = [], [], [], []
+rev = revenue
 
 for t in range(years):
-    g = growth_stage1 if t < transition_years else growth_stage2
-    rev = rev * (1 + g)
+    growth = growth_high if t < high_growth_years else growth_stable
+    rev *= (1 + growth)
 
-    ebit = rev * operating_margin
-    nopat = ebit * (1 - tax)
+    ebit = rev * margin
+    nopat = ebit * (1 - tax_rate)
+    reinvestment = nopat * reinvest
+    fcf = nopat - reinvestment
 
-    capex = rev * capex_rate
-    wc_invest = rev * wc_rate
-
-    fcf = nopat - capex - wc_invest
-
-    revenue_list.append(rev)
-    fcf_list.append(fcf)
-
-# -----------------------------
-# DISCOUNTING
-# -----------------------------
-discount_factors = [(1 / (1 + discount_rate) ** (i + 1)) for i in range(years)]
-pv_fcf = [f * d for f, d in zip(fcf_list, discount_factors)]
-
-terminal_fcf = fcf_list[-1]
-terminal_value = terminal_fcf * (1 + growth_stage2) / (discount_rate - growth_stage2)
-pv_terminal = terminal_value / ((1 + discount_rate) ** years)
-
-enterprise_value = sum(pv_fcf) + pv_terminal
-equity_value = enterprise_value - net_debt
-intrinsic_value = equity_value / shares_out
+    revenues.append(rev)
+    ebits.append(ebit)
+    nopats.append(nopat)
+    fcfs.append(fcf)
 
 # -----------------------------
-# OUTPUT SECTION
+# Discounting
 # -----------------------------
-st.header("📈 Valuation Summary")
+discount_factors = [(1 / (1 + wacc) ** (t + 1)) for t in range(years)]
+pv_fcfs = [fcf * df for fcf, df in zip(fcfs, discount_factors)]
 
-c1, c2, c3 = st.columns(3)
+terminal_value = fcfs[-1] * (1 + growth_stable) / (wacc - growth_stable)
+pv_terminal = terminal_value / ((1 + wacc) ** years)
 
-c1.metric("Enterprise Value ($M)", f"{enterprise_value:,.1f}")
-c2.metric("Equity Value ($M)", f"{equity_value:,.1f}")
-c3.metric("Intrinsic Value / Share", f"${intrinsic_value:,.2f}")
-
-# -----------------------------
-# INTERPRETATION
-# -----------------------------
-st.subheader("📊 Investment Insight")
-
-st.write(
-    f"The model estimates a fair value of **${intrinsic_value:.2f} per share** based on current assumptions."
-)
-
-st.write("""
-DCF outputs are highly sensitive to:
-- Growth assumptions  
-- Discount rate (risk perception)  
-- Long-term terminal assumptions  
-""")
+enterprise_value = sum(pv_fcfs) + pv_terminal
+equity_value = enterprise_value - debt + cash
+value_per_share = equity_value / shares
 
 # -----------------------------
-# TABLE OUTPUT
+# Output
+# -----------------------------
+st.header("📈 Valuation Results")
+
+col1, col2, col3 = st.columns(3)
+col1.metric("Enterprise Value", f"${enterprise_value:,.2f}")
+col2.metric("Equity Value", f"${equity_value:,.2f}")
+col3.metric("Value per Share", f"${value_per_share:,.2f}")
+
+# Interpretation
+st.subheader("📊 Interpretation")
+if value_per_share > 0:
+    st.write(f"Estimated intrinsic value suggests the stock is **{'undervalued' if value_per_share > 1 else 'overvalued'}** based on your assumptions.")
+
+# -----------------------------
+# Data Table
 # -----------------------------
 df = pd.DataFrame({
     "Year": np.arange(1, years + 1),
-    "Revenue ($M)": revenue_list,
-    "FCF ($M)": fcf_list,
+    "Revenue": revenues,
+    "EBIT": ebits,
+    "NOPAT": nopats,
+    "FCF": fcfs,
     "Discount Factor": discount_factors,
-    "PV of FCF ($M)": pv_fcf
+    "PV of FCF": pv_fcfs
 })
 
-st.header("📋 Forecast Breakdown")
-st.dataframe(df, use_container_width=True)
+st.subheader("📋 Projection Table")
+st.dataframe(df)
 
 # -----------------------------
-# VISUALIZATION
+# Chart
 # -----------------------------
-st.header("📉 Cash Flow Trend")
-
-st.line_chart(df.set_index("Year")[["FCF ($M)", "Revenue ($M)"]])
-
-# -----------------------------
-# TERMINAL VALUE INSIGHT
-# -----------------------------
-st.header("🔮 Terminal Value Importance")
-
-tv_share = pv_terminal / enterprise_value
-
-st.write(
-    f"Terminal value represents approximately **{tv_share:.1%}** of total firm value."
-)
-
-if tv_share > 0.7:
-    st.warning("High reliance on terminal value → results are more assumption-sensitive.")
-elif tv_share < 0.5:
-    st.success("More value comes from explicit forecasts → model is more grounded in near-term cash flows.")
+st.subheader("📉 FCF Projection")
+st.line_chart(df.set_index("Year")["FCF"])
 
 # -----------------------------
-# FINAL SUMMARY
+# Sensitivity Analysis (Simple)
 # -----------------------------
-st.header("🎯 Key Takeaways")
+st.subheader("🔥 Sensitivity Analysis")
 
-st.write(f"""
-- Intrinsic value estimate: **${intrinsic_value:.2f} per share**  
-- Model uses a **two-stage growth DCF framework**  
-- Output is highly sensitive to WACC ({discount_rate:.1%}) and terminal growth ({growth_stage2:.1%})  
-- Always interpret DCF as a **range of outcomes, not a single precise value**  
+wacc_range = [wacc - 0.01, wacc, wacc + 0.01]
+growth_range = [growth_stable - 0.005, growth_stable, growth_stable + 0.005]
+
+sens = pd.DataFrame(index=[f"{g:.2%}" for g in growth_range],
+                    columns=[f"{w:.2%}" for w in wacc_range])
+
+for g in growth_range:
+    for w in wacc_range:
+        tv = fcfs[-1] * (1 + g) / (w - g)
+        pv_tv = tv / ((1 + w) ** years)
+        ev = sum([fcfs[i] / ((1 + w) ** (i+1)) for i in range(years)]) + pv_tv
+        eq = ev - debt + cash
+        sens.loc[f"{g:.2%}", f"{w:.2%}"] = round(eq / shares, 2)
+
+st.dataframe(sens)
+
+# -----------------------------
+# Explanation
+# -----------------------------
+st.subheader("📘 Model Explanation")
+
+st.markdown("""
+- Revenue grows in two stages: high growth → stable growth  
+- EBIT = Revenue × Margin  
+- NOPAT = EBIT × (1 - Tax Rate)  
+- FCF = NOPAT - Reinvestment  
+- Terminal Value uses Gordon Growth Model  
+- All cash flows are discounted using WACC  
+
+This structure is fully replicable in Excel.
 """)
