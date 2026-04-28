@@ -1,10 +1,9 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
-import yfinance as yf
 
 st.set_page_config(layout="wide")
-st.title("📊 Advanced DCF Valuation App")
+st.title("📊 DCF Valuation App (Advanced & Deployable)")
 
 # -----------------------------
 # Sidebar Inputs
@@ -13,35 +12,24 @@ st.sidebar.header("🔧 Assumptions")
 
 ticker = st.sidebar.text_input("Stock Ticker", value="AAPL")
 
-# Pull market data
-stock = yf.Ticker(ticker)
-price = stock.history(period="1d")["Close"].iloc[-1]
+price = st.sidebar.number_input("Current Stock Price ($)", value=150.0)
 
-st.sidebar.markdown(f"**Current Price:** ${price:.2f}")
-
-# Financial assumptions
 revenue = st.sidebar.number_input("Base Revenue ($M)", value=100000.0)
 
-growth_high = st.sidebar.slider("High Growth (%)", 0.0, 20.0, 8.0) / 100
-growth_stable = st.sidebar.slider("Terminal Growth (%)", 0.0, 5.0, 2.5) / 100
-
+# Growth assumptions
+growth_high = st.sidebar.slider("High Growth Rate (%)", 0.0, 20.0, 8.0) / 100
+growth_stable = st.sidebar.slider("Terminal Growth Rate (%)", 0.0, 5.0, 2.5) / 100
 years_high = st.sidebar.slider("High Growth Years", 1, 10, 5)
 
+# Operating assumptions
 margin = st.sidebar.slider("EBIT Margin (%)", 0.0, 50.0, 25.0) / 100
 tax_rate = st.sidebar.slider("Tax Rate (%)", 0.0, 40.0, 21.0) / 100
 reinvest = st.sidebar.slider("Reinvestment Rate (%)", 0.0, 100.0, 40.0) / 100
 
-# WACC (CAPM)
-risk_free = st.sidebar.slider("Risk-Free Rate (%)", 0.0, 10.0, 4.0) / 100
-market_return = st.sidebar.slider("Market Return (%)", 5.0, 15.0, 10.0) / 100
-beta = st.sidebar.slider("Beta", 0.5, 2.0, 1.1)
+# Discount rate
+wacc = st.sidebar.slider("WACC (%)", 5.0, 15.0, 10.0) / 100
 
-cost_of_equity = risk_free + beta * (market_return - risk_free)
-wacc = st.sidebar.slider("Override WACC (%)", 0.0, 20.0, cost_of_equity * 100) / 100
-
-st.sidebar.markdown(f"**CAPM Cost of Equity:** {cost_of_equity:.2%}")
-
-# Capital structure
+# Balance sheet
 debt = st.sidebar.number_input("Debt ($M)", value=50000.0)
 cash = st.sidebar.number_input("Cash ($M)", value=20000.0)
 shares = st.sidebar.number_input("Shares Outstanding (M)", value=16000.0)
@@ -51,25 +39,18 @@ shares = st.sidebar.number_input("Shares Outstanding (M)", value=16000.0)
 # -----------------------------
 years = years_high + 5
 
-revenues = []
-fcfs = []
-ebits = []
-nopats = []
-
+revenues, ebits, nopats, fcfs = [], [], [], []
 rev = revenue
 
 for t in range(years):
-    if t < years_high:
-        growth = growth_high
-    else:
-        growth = growth_stable
-
-    rev = rev * (1 + growth)
+    growth = growth_high if t < years_high else growth_stable
+    rev *= (1 + growth)
+    
     ebit = rev * margin
     nopat = ebit * (1 - tax_rate)
     reinvestment = nopat * reinvest
     fcf = nopat - reinvestment
-
+    
     revenues.append(rev)
     ebits.append(ebit)
     nopats.append(nopat)
@@ -91,7 +72,7 @@ value_per_share = equity_value / shares
 # -----------------------------
 # Results
 # -----------------------------
-st.header("📈 Valuation Output")
+st.header("📈 Valuation Results")
 
 col1, col2, col3 = st.columns(3)
 col1.metric("Enterprise Value ($M)", f"{enterprise_value:,.0f}")
@@ -99,8 +80,8 @@ col2.metric("Equity Value ($M)", f"{equity_value:,.0f}")
 col3.metric("Intrinsic Value / Share", f"${value_per_share:.2f}")
 
 st.subheader("📊 Market Comparison")
-st.write(f"**Current Price:** ${price:.2f}")
-st.write(f"**Upside/Downside:** {(value_per_share/price - 1):.2%}")
+st.write(f"Current Price: ${price:.2f}")
+st.write(f"Upside / Downside: {(value_per_share / price - 1):.2%}")
 
 # -----------------------------
 # Projection Table
@@ -115,7 +96,7 @@ df = pd.DataFrame({
     "PV of FCF": pv_fcfs
 })
 
-st.subheader("📋 Detailed Projection")
+st.subheader("📋 Projection Breakdown (Excel Replicable)")
 st.dataframe(df)
 
 # -----------------------------
@@ -127,7 +108,7 @@ st.line_chart(df.set_index("Year")["FCF"])
 # -----------------------------
 # Sensitivity Analysis
 # -----------------------------
-st.subheader("🔥 Sensitivity Analysis (WACC vs Growth)")
+st.subheader("🔥 Sensitivity Analysis")
 
 wacc_range = np.linspace(wacc - 0.02, wacc + 0.02, 5)
 growth_range = np.linspace(growth_stable - 0.01, growth_stable + 0.01, 5)
@@ -149,15 +130,20 @@ st.dataframe(sensitivity)
 # -----------------------------
 # Explanation Section
 # -----------------------------
-st.subheader("📘 How the Model Works")
+st.subheader("📘 Model Explanation")
 
 st.markdown("""
-1. **Revenue Projection:** grows based on high-growth and terminal phases  
-2. **EBIT:** Revenue × Margin  
-3. **NOPAT:** EBIT × (1 - Tax Rate)  
-4. **FCF:** NOPAT - Reinvestment  
-5. **Discounting:** Future cash flows discounted using WACC  
-6. **Terminal Value:** Gordon Growth Model  
-7. **Equity Value:** EV - Debt + Cash  
-8. **Intrinsic Value per Share:** Equity / Shares  
+**Step-by-Step DCF Process:**
+
+1. Revenue grows using a **two-stage model** (high growth → stable growth)  
+2. EBIT = Revenue × Margin  
+3. NOPAT = EBIT × (1 - Tax Rate)  
+4. FCF = NOPAT - Reinvestment  
+5. Cash flows are discounted using WACC  
+6. Terminal Value uses Gordon Growth Model  
+7. Enterprise Value = PV of FCFs + PV of Terminal Value  
+8. Equity Value = EV - Debt + Cash  
+9. Value per Share = Equity / Shares  
+
+This structure allows full replication in Excel.
 """)
