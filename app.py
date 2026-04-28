@@ -2,176 +2,148 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 
-# ----------------------------------------
-# PAGE SETUP
-# ----------------------------------------
-st.set_page_config(page_title="DCF Valuation Tool", layout="wide")
-st.title("📊 DCF Valuation App")
+st.set_page_config(layout="wide")
+st.title("📊 DCF Valuation App (Advanced & Deployable)")
 
-st.markdown("""
-Estimate a company's intrinsic value using a **Discounted Cash Flow (DCF)** model.
-All inputs are user-defined to ensure transparency and full control.
-""")
+# -----------------------------
+# Sidebar Inputs
+# -----------------------------
+st.sidebar.header("🔧 Assumptions")
 
-# ----------------------------------------
-# STEP 1: BASIC INPUTS
-# ----------------------------------------
-st.header("Step 1 — Company Inputs")
+ticker = st.sidebar.text_input("Stock Ticker", value="AAPL")
 
-col1, col2, col3 = st.columns(3)
+price = st.sidebar.number_input("Current Stock Price ($)", value=150.0)
 
-price = col1.number_input("Current Stock Price ($)", value=100.0)
-revenue = col2.number_input("Current Revenue ($)", value=1_000_000_000.0)
-shares = col3.number_input("Shares Outstanding", value=1_000_000.0)
+revenue = st.sidebar.number_input("Base Revenue ($M)", value=100000.0)
 
-debt = col1.number_input("Total Debt ($)", value=100_000_000.0)
-cash = col2.number_input("Cash ($)", value=50_000_000.0)
+# Growth assumptions
+growth_high = st.sidebar.slider("High Growth Rate (%)", 0.0, 20.0, 8.0) / 100
+growth_stable = st.sidebar.slider("Terminal Growth Rate (%)", 0.0, 5.0, 2.5) / 100
+years_high = st.sidebar.slider("High Growth Years", 1, 10, 5)
 
-# ----------------------------------------
-# SIDEBAR ASSUMPTIONS
-# ----------------------------------------
-st.sidebar.header("Model Assumptions")
+# Operating assumptions
+margin = st.sidebar.slider("EBIT Margin (%)", 0.0, 50.0, 25.0) / 100
+tax_rate = st.sidebar.slider("Tax Rate (%)", 0.0, 40.0, 21.0) / 100
+reinvest = st.sidebar.slider("Reinvestment Rate (%)", 0.0, 100.0, 40.0) / 100
 
-growth = st.sidebar.slider("Revenue Growth (%)", 0.0, 20.0, 8.0) / 100
-margin = st.sidebar.slider("EBIT Margin (%)", 0.0, 50.0, 20.0) / 100
-tax_rate = st.sidebar.slider("Tax Rate (%)", 0.0, 40.0, 25.0) / 100
-reinvest = st.sidebar.slider("Reinvestment Rate (%)", 0.0, 100.0, 30.0) / 100
-
+# Discount rate
 wacc = st.sidebar.slider("WACC (%)", 5.0, 15.0, 10.0) / 100
-terminal_growth = st.sidebar.slider("Terminal Growth (%)", 0.0, 5.0, 2.5) / 100
-years = st.sidebar.slider("Projection Years", 3, 10, 5)
 
-# Validation
-if wacc <= terminal_growth:
-    st.error("WACC must be greater than terminal growth.")
-    st.stop()
+# Balance sheet
+debt = st.sidebar.number_input("Debt ($M)", value=50000.0)
+cash = st.sidebar.number_input("Cash ($M)", value=20000.0)
+shares = st.sidebar.number_input("Shares Outstanding (M)", value=16000.0)
 
-# ----------------------------------------
-# STEP 2: DCF CALCULATION
-# ----------------------------------------
-st.header("Step 2 — Cash Flow Projection")
+# -----------------------------
+# Projection Logic
+# -----------------------------
+years = years_high + 5
 
-revenues, ebit_list, nopat_list, fcf_list = [], [], [], []
+revenues, ebits, nopats, fcfs = [], [], [], []
 rev = revenue
 
-for i in range(years):
+for t in range(years):
+    growth = growth_high if t < years_high else growth_stable
     rev *= (1 + growth)
+    
     ebit = rev * margin
     nopat = ebit * (1 - tax_rate)
-    fcf = nopat * (1 - reinvest)
-
+    reinvestment = nopat * reinvest
+    fcf = nopat - reinvestment
+    
     revenues.append(rev)
-    ebit_list.append(ebit)
-    nopat_list.append(nopat)
-    fcf_list.append(fcf)
+    ebits.append(ebit)
+    nopats.append(nopat)
+    fcfs.append(fcf)
 
-discount_factors = [(1 / (1 + wacc) ** (i + 1)) for i in range(years)]
-pv_fcfs = [f * d for f, d in zip(fcf_list, discount_factors)]
+# -----------------------------
+# Discounting
+# -----------------------------
+discount_factors = [(1 / (1 + wacc) ** (t + 1)) for t in range(years)]
+pv_fcfs = [fcf * df for fcf, df in zip(fcfs, discount_factors)]
 
-terminal_value = fcf_list[-1] * (1 + terminal_growth) / (wacc - terminal_growth)
+terminal_value = fcfs[-1] * (1 + growth_stable) / (wacc - growth_stable)
 pv_terminal = terminal_value / ((1 + wacc) ** years)
 
 enterprise_value = sum(pv_fcfs) + pv_terminal
 equity_value = enterprise_value - debt + cash
 value_per_share = equity_value / shares
 
-# ----------------------------------------
-# TABLE
-# ----------------------------------------
+# -----------------------------
+# Results
+# -----------------------------
+st.header("📈 Valuation Results")
+
+col1, col2, col3 = st.columns(3)
+col1.metric("Enterprise Value ($M)", f"{enterprise_value:,.0f}")
+col2.metric("Equity Value ($M)", f"{equity_value:,.0f}")
+col3.metric("Intrinsic Value / Share", f"${value_per_share:.2f}")
+
+st.subheader("📊 Market Comparison")
+st.write(f"Current Price: ${price:.2f}")
+st.write(f"Upside / Downside: {(value_per_share / price - 1):.2%}")
+
+# -----------------------------
+# Projection Table
+# -----------------------------
 df = pd.DataFrame({
     "Year": np.arange(1, years + 1),
     "Revenue": revenues,
-    "EBIT": ebit_list,
-    "NOPAT": nopat_list,
-    "FCF": fcf_list,
+    "EBIT": ebits,
+    "NOPAT": nopats,
+    "FCF": fcfs,
     "Discount Factor": discount_factors,
     "PV of FCF": pv_fcfs
 })
 
-st.subheader("Projection Table")
+st.subheader("📋 Projection Breakdown (Excel Replicable)")
 st.dataframe(df)
 
-# ----------------------------------------
-# CHART
-# ----------------------------------------
-st.subheader("Free Cash Flow Projection")
+# -----------------------------
+# Chart
+# -----------------------------
+st.subheader("📉 Free Cash Flow Projection")
 st.line_chart(df.set_index("Year")["FCF"])
 
-# ----------------------------------------
-# STEP 3: RESULTS
-# ----------------------------------------
-st.header("Step 3 — Valuation Results")
+# -----------------------------
+# Sensitivity Analysis
+# -----------------------------
+st.subheader("🔥 Sensitivity Analysis")
 
-c1, c2, c3 = st.columns(3)
-c1.metric("Enterprise Value", f"${enterprise_value:,.0f}")
-c2.metric("Equity Value", f"${equity_value:,.0f}")
-c3.metric("Intrinsic Value / Share", f"${value_per_share:.2f}")
+wacc_range = np.linspace(wacc - 0.02, wacc + 0.02, 5)
+growth_range = np.linspace(growth_stable - 0.01, growth_stable + 0.01, 5)
 
-st.write(f"Current Price: ${price:.2f}")
-st.write(f"Upside / Downside: {(value_per_share / price - 1):.2%}")
+sensitivity = pd.DataFrame(index=[f"{g:.2%}" for g in growth_range],
+                           columns=[f"{w:.2%}" for w in wacc_range])
 
-# ----------------------------------------
-# TERMINAL VALUE BREAKDOWN
-# ----------------------------------------
-st.subheader("Terminal Value Explanation")
-
-st.markdown(f"""
-- Final Year FCF: ${fcf_list[-1]:,.0f}  
-- Terminal Growth Rate: {terminal_growth*100:.2f}%  
-- WACC: {wacc*100:.2f}%  
-
-Terminal Value = FCF × (1 + g) ÷ (WACC − g)
-
-Present Value of Terminal Value: ${pv_terminal:,.0f}
-""")
-
-# ----------------------------------------
-# STEP 4: SENSITIVITY
-# ----------------------------------------
-st.header("Step 4 — Sensitivity Analysis")
-
-w_range = np.linspace(wacc - 0.02, wacc + 0.02, 5)
-g_range = np.linspace(growth - 0.02, growth + 0.02, 5)
-
-sens = pd.DataFrame(index=[f"{g:.2%}" for g in g_range],
-                    columns=[f"{w:.2%}" for w in w_range])
-
-for g in g_range:
-    for w in w_range:
-        if w <= terminal_growth:
-            sens.loc[f"{g:.2%}", f"{w:.2%}"] = np.nan
-            continue
-
-        r = revenue
-        flows = []
-
-        for _ in range(years):
-            r *= (1 + g)
-            nop = r * margin * (1 - tax_rate)
-            flows.append(nop * (1 - reinvest))
-
-        pv = [flows[i] / ((1 + w) ** (i + 1)) for i in range(years)]
-        tv = flows[-1] * (1 + terminal_growth) / (w - terminal_growth)
-        ev = sum(pv) + tv / ((1 + w) ** years)
-
+for g in growth_range:
+    for w in wacc_range:
+        tv = fcfs[-1] * (1 + g) / (w - g)
+        pv_tv = tv / ((1 + w) ** years)
+        ev = sum([fcfs[i] / ((1 + w) ** (i+1)) for i in range(years)]) + pv_tv
         eq = ev - debt + cash
-        sens.loc[f"{g:.2%}", f"{w:.2%}"] = round(eq / shares, 2)
+        val = eq / shares
+        sensitivity.loc[f"{g:.2%}", f"{w:.2%}"] = round(val, 2)
 
-st.dataframe(sens)
+st.dataframe(sensitivity)
 
-# ----------------------------------------
-# EXPLANATION
-# ----------------------------------------
+# -----------------------------
+# Explanation Section
+# -----------------------------
+st.subheader("📘 Model Explanation")
+
 st.markdown("""
-### Model Explanation
+**Step-by-Step DCF Process:**
 
-1. Revenue grows based on your assumption  
+1. Revenue grows using a **two-stage model** (high growth → stable growth)  
 2. EBIT = Revenue × Margin  
-3. NOPAT = EBIT × (1 − Tax Rate)  
-4. FCF = NOPAT × (1 − Reinvestment Rate)  
+3. NOPAT = EBIT × (1 - Tax Rate)  
+4. FCF = NOPAT - Reinvestment  
 5. Cash flows are discounted using WACC  
-6. Terminal value captures long-term value  
-7. Equity value = Enterprise value − Debt + Cash  
+6. Terminal Value uses Gordon Growth Model  
+7. Enterprise Value = PV of FCFs + PV of Terminal Value  
+8. Equity Value = EV - Debt + Cash  
+9. Value per Share = Equity / Shares  
 
-This model is fully transparent and can be replicated in Excel.
+This structure allows full replication in Excel.
 """)
