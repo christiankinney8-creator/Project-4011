@@ -1,7 +1,12 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
-import yfinance as yf
+
+# ✅ SAFE IMPORT (prevents crash)
+try:
+    import yfinance as yf
+except ImportError:
+    yf = None
 
 st.set_page_config(page_title="Advanced DCF Valuation Tool", layout="wide")
 
@@ -24,10 +29,15 @@ st.sidebar.header("🔧 Model Inputs")
 ticker = st.sidebar.text_input("Stock Ticker (e.g. AAPL)", value="AAPL").upper()
 use_live_data = st.sidebar.checkbox("Use Live Financial Data", value=False)
 
+# ✅ HANDLE MISSING YFINANCE
+if use_live_data and yf is None:
+    st.sidebar.error("yfinance not installed. Add it to requirements.txt")
+    use_live_data = False
+
 # -------------------------
 # LOAD DATA
 # -------------------------
-if use_live_data and ticker:
+if use_live_data and ticker and yf is not None:
     try:
         stock = yf.Ticker(ticker)
         info = stock.info
@@ -41,7 +51,7 @@ if use_live_data and ticker:
 
         st.sidebar.success(f"Loaded data for {ticker}")
 
-    except:
+    except Exception:
         st.sidebar.error("Failed to fetch data. Using manual inputs.")
         use_live_data = False
 
@@ -165,7 +175,7 @@ c2.metric("Equity Value ($M)", f"{equity_value:,.1f}")
 c3.metric("Value / Share ($)", f"{value_per_share:,.2f}")
 
 # Show market price if available
-if use_live_data:
+if use_live_data and yf is not None:
     st.metric("Current Stock Price", f"${price:.2f}")
 
 # =========================================================
@@ -175,65 +185,8 @@ st.subheader("📊 Interpretation")
 
 st.write(f"Intrinsic value estimate: **${value_per_share:.2f} per share**.")
 
-if use_live_data:
+if use_live_data and yf is not None:
     if value_per_share > price:
         st.success("Stock appears undervalued vs market price")
     else:
         st.warning("Stock appears overvalued vs market price")
-
-# =========================================================
-# TABLE
-# =========================================================
-df = pd.DataFrame({
-    "Year": np.arange(1, total_years + 1),
-    "Revenue ($M)": revenues,
-    "FCF ($M)": fcfs,
-    "Discount Factor": discount_factors,
-    "PV of FCF ($M)": pv_fcfs
-})
-
-st.header("📋 Projection Breakdown")
-st.dataframe(df, use_container_width=True)
-
-# =========================================================
-# CHARTS
-# =========================================================
-st.header("📉 Cash Flow Trend")
-st.line_chart(df.set_index("Year")[["FCF ($M)", "Revenue ($M)"]])
-
-# =========================================================
-# TERMINAL VALUE INSIGHT
-# =========================================================
-st.header("🔮 Terminal Value Breakdown")
-
-tv_weight = pv_tv / enterprise_value
-st.write(f"Terminal value contributes **{tv_weight:.1%}** of total value.")
-
-# =========================================================
-# SENSITIVITY
-# =========================================================
-st.header("🔥 Sensitivity Analysis (Equity Value / Share)")
-
-wacc_range = [wacc - 0.01, wacc, wacc + 0.01]
-growth_range = [growth_stage2 - 0.005, growth_stage2, growth_stage2 + 0.005]
-
-sens = pd.DataFrame(
-    index=[f"{g:.2%}" for g in growth_range],
-    columns=[f"{w:.2%}" for w in wacc_range]
-)
-
-for g in growth_range:
-    for w in wacc_range:
-        if w <= g:
-            sens.loc[f"{g:.2%}", f"{w:.2%}"] = np.nan
-            continue
-
-        tv_s = fcfs[-1] * (1 + g) / (w - g)
-        pv_tv_s = tv_s / ((1 + w) ** total_years)
-
-        ev_s = sum([fcfs[i] / ((1 + w) ** (i + 1)) for i in range(total_years)]) + pv_tv_s
-        eq_s = ev_s - net_debt + cash
-
-        sens.loc[f"{g:.2%}", f"{w:.2%}"] = round(eq_s / shares, 2)
-
-st.dataframe(sens)
